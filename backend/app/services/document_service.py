@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import HTTPException
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -30,3 +28,8 @@ def split_text_into_chunks(text: str) -> list[str]:
     )
 
     return text_splitter.split_text(text)
+
+
+def build_preview(text: str, limit: int = 300) -> str:
+    normalized = " ".join(text.split())
+    return normalized[:limit]

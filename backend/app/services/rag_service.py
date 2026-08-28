@@ -4,12 +4,12 @@ from app.services.llm_service import generate_answer as generate_llm_answer
 from app.services.vector_service import similarity_search
 
 
-def search_documents(query: str, k: int = 4):
-    return similarity_search(query=query, k=k)
+def search_documents(query: str, k: int = 4, document_id: str | None = None):
+    return similarity_search(query=query, k=k, document_id=document_id)
 
 
-def generate_answer(query: str, k: int = 4):
-    results = search_documents(query, k=k)
+def generate_answer(query: str, k: int = 4, document_id: str | None = None):
+    results = search_documents(query, k=k, document_id=document_id)
 
     if not results:
         return {
@@ -31,8 +31,10 @@ def generate_answer(query: str, k: int = 4):
 
     sources = [
         {
+            "document_id": doc.metadata.get("document_id"),
             "filename": doc.metadata.get("filename"),
             "chunk_index": doc.metadata.get("chunk_index"),
+            "stored_as": doc.metadata.get("stored_as"),
         }
         for doc in results
     ]

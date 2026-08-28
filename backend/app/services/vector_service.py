@@ -29,21 +29,43 @@ def get_vector_store() -> Chroma:
     )
 
 
-def add_document_chunks(chunks: list[str], filename: str) -> int:
+def add_document_chunks(
+    *,
+    chunks: list[str],
+    document_id: str,
+    filename: str,
+    stored_as: str,
+) -> int:
     if not chunks:
         return 0
 
     vector_store = get_vector_store()
+    ids = [f"{document_id}:{index}" for index in range(len(chunks))]
     documents = [
         Document(
             page_content=chunk,
-            metadata={"filename": filename, "chunk_index": index},
+            metadata={
+                "document_id": document_id,
+                "filename": filename,
+                "stored_as": stored_as,
+                "chunk_index": index,
+            },
         )
         for index, chunk in enumerate(chunks)
     ]
-    vector_store.add_documents(documents)
+    vector_store.add_documents(documents, ids=ids)
     return len(documents)
 
 
-def similarity_search(query: str, k: int = 4) -> list[Document]:
-    return get_vector_store().similarity_search(query=query, k=k)
+def similarity_search(query: str, k: int = 4, document_id: str | None = None) -> list[Document]:
+    filter_kwargs = {"document_id": document_id} if document_id else None
+    return get_vector_store().similarity_search(query=query, k=k, filter=filter_kwargs)
+
+
+def delete_document_chunks(document_id: str, chunk_count: int) -> None:
+    if chunk_count <= 0:
+        return
+
+    vector_store = get_vector_store()
+    ids = [f"{document_id}:{index}" for index in range(chunk_count)]
+    vector_store.delete(ids=ids)
