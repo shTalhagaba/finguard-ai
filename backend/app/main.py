@@ -1,7 +1,12 @@
 from contextlib import asynccontextmanager
+import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.config import get_settings
 from app.routes import auth, chat, upload
@@ -9,6 +14,19 @@ from app.services.store import init_schema
 
 
 settings = get_settings()
+logger = logging.getLogger("finguard.api")
+
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        logger.info(
+            "%s %s -> %s",
+            request.method,
+            request.url.path,
+            response.status_code,
+        )
+        return response
 
 
 @asynccontextmanager
@@ -35,6 +53,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+app.add_middleware(RequestLoggingMiddleware)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(_: Request, exc: Exception):
+    logger.exception("Unhandled application error: %s", exc)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error."})
 
 
 app.include_router(upload.router)
@@ -55,4 +82,5 @@ async def health_check():
     return {
         "status": "healthy",
         "service": settings.app_name,
+        "environment": settings.environment,
     }

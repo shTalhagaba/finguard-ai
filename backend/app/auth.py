@@ -60,6 +60,8 @@ def _sign(payload_text: str) -> str:
 
 def create_access_token(*, user_id: str, email: str) -> str:
     settings = get_settings()
+    if not settings.auth_signing_key:
+        raise HTTPException(status_code=500, detail="AUTH_SIGNING_KEY is not configured.")
     payload = {
         "sub": user_id,
         "email": email,

@@ -1,0 +1,47 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - backend/.env.example
+    environment:
+      ENVIRONMENT: production
+      ALLOWED_HOSTS: localhost,127.0.0.1,backend
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      DATA_DIRECTORY: /app/data
+      UPLOADS_DIRECTORY: /app/uploads
+      CHROMA_PERSIST_DIRECTORY: /app/chroma_db
+    volumes:
+      - backend_data:/app/data
+      - backend_uploads:/app/uploads
+      - backend_chroma:/app/chroma_db
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    env_file:
+      - frontend/.env.example
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  backend_data:
+  backend_uploads:
+  backend_chroma:
