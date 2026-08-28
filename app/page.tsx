@@ -1,29 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 
-type ChatRole = "user" | "assistant";
+type DocumentStatus =
+  | "processing"
+  | "completed"
+  | "failed"
+  | "duplicate"
+  | string;
 
-type Source = {
+type DocumentRecord = {
+  document_id: string;
   filename: string;
-  chunk_index: number;
-};
-
-type Message = {
-  id: string;
-  role: ChatRole;
-  content: string;
-  sources?: Source[];
-};
-
-type UploadResponse = {
-  message: string;
-  filename: string;
-  stored_as: string;
+  status: DocumentStatus;
+  created_at: string;
+  updated_at: string;
+  error: string | null;
   characters_extracted: number;
   chunks_created: number;
   chunks_stored: number;
   preview: string;
+};
+
+type UploadResponse = {
+  documents: Array<DocumentRecord & { message?: string; detail?: string }>;
+  failures: Array<{ filename: string; detail: string; document_id?: string }>;
+};
+
+type Source = {
+  document_id?: string;
+  filename?: string;
+  chunk_index?: number;
+  stored_as?: string;
 };
 
 type ChatResponse = {
@@ -31,112 +39,58 @@ type ChatResponse = {
   sources?: Source[];
 };
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+type Message = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources?: Source[];
+};
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("en-US").format(value);
-}
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 function createId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function DocumentIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
-      <path
-        d="M7 3.75A2.75 2.75 0 0 1 9.75 1h4.69c.73 0 1.43.29 1.95.81l2.8 2.8c.52.52.81 1.22.81 1.95v10.69A2.75 2.75 0 0 1 17.25 20.0H9.75A2.75 2.75 0 0 1 7 17.25V3.75Z"
-        fill="currentColor"
-        opacity=".18"
-      />
-      <path
-        d="M13.5 1.75V5a1 1 0 0 0 1 1h3.25"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M9 11.25h6M9 14.75h6"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
-function SparkIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5">
-      <path
-        d="m12 2 1.7 5.8L20 9.5l-5.3 1.7L12 17l-2.7-5.8L4 9.5l6.3-1.7L12 2Z"
-        fill="currentColor"
-      />
-      <path
-        d="m5 15 .8 2.5L8 18.3l-2.2.8L5 21l-.8-1.9L2 18.3l2.2-.8L5 15Z"
-        fill="currentColor"
-        opacity=".75"
-      />
-    </svg>
-  );
+function timeLabel(value: string) {
+  return new Date(value).toLocaleString();
 }
 
-function UploadWave({ active }: { active: boolean }) {
-  return (
-    <div className="flex items-end gap-1">
-      {[0, 1, 2].map((index) => (
-        <span
-          key={index}
-          className={`h-2 w-2 rounded-full bg-emerald-300 transition-all ${
-            active ? "animate-pulse" : "opacity-40"
-          }`}
-          style={{ animationDelay: `${index * 120}ms` }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function TypingIndicator() {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="flex h-7 w-7 items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-400/10 text-cyan-200">
-        <SparkIcon />
-      </span>
-      <span className="inline-flex items-center gap-1.5 text-sm text-slate-300">
-        <span>FinGuard AI is analyzing</span>
-        <span className="flex gap-1">
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-300 [animation-delay:-0.3s]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-300 [animation-delay:-0.15s]" />
-          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-300" />
-        </span>
-      </span>
-    </div>
-  );
+function statusStyle(status: string) {
+  switch (status) {
+    case "completed":
+      return "border-emerald-400/20 bg-emerald-400/10 text-emerald-200";
+    case "processing":
+      return "border-cyan-400/20 bg-cyan-400/10 text-cyan-200";
+    case "failed":
+      return "border-rose-400/20 bg-rose-400/10 text-rose-200";
+    case "duplicate":
+      return "border-amber-400/20 bg-amber-400/10 text-amber-200";
+    default:
+      return "border-white/10 bg-white/5 text-slate-200";
+  }
 }
 
 export default function Home() {
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [isPending, startTransition] = useTransition();
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [documentReady, setDocumentReady] = useState(false);
-  const [documentStatus, setDocumentStatus] = useState<string>(
-    "Waiting for a PDF upload"
-  );
-  const [documentMetrics, setDocumentMetrics] = useState<UploadResponse | null>(
-    null
-  );
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(true);
+  const [documentError, setDocumentError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
-
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [loading, setLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -146,96 +100,143 @@ export default function Home() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, loading]);
 
-  const selectedFileName = file?.name ?? "No document selected";
-  const documentCount = documentReady ? 1 : 0;
+  useEffect(() => {
+    const loadDocuments = async () => {
+      setDocumentsLoading(true);
+      setDocumentError(null);
+      try {
+        const response = await fetch(`${API_URL}/api/documents`);
+        const data = (await response.json()) as { documents?: DocumentRecord[]; detail?: string };
+        if (!response.ok) {
+          throw new Error(data.detail || "Failed to load documents.");
+        }
+        const nextDocuments = data.documents ?? [];
+        setDocuments(nextDocuments);
+        setActiveDocumentId((current) => {
+          if (current && nextDocuments.some((doc) => doc.document_id === current)) {
+            return current;
+          }
+          return nextDocuments[0]?.document_id ?? null;
+        });
+      } catch (error) {
+        setDocumentError(error instanceof Error ? error.message : "Failed to load documents.");
+      } finally {
+        setDocumentsLoading(false);
+      }
+    };
 
-  const resetDocument = () => {
-    setFile(null);
-    setDocumentReady(false);
-    setDocumentMetrics(null);
-    setDocumentStatus("Waiting for a PDF upload");
-    setUploadError(null);
-    setChatError(null);
-    setMessages([]);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
+    void loadDocuments();
+  }, []);
+
+  const readyDocuments = documents.filter((document) => document.status === "completed");
+  const selectedDocument = documents.find((document) => document.document_id === activeDocumentId) ?? null;
+
+  const totalChunks = documents.reduce((sum, document) => sum + document.chunks_stored, 0);
+
+  const refreshDocuments = async () => {
+    const response = await fetch(`${API_URL}/api/documents`);
+    const data = (await response.json()) as { documents?: DocumentRecord[]; detail?: string };
+    if (!response.ok) {
+      throw new Error(data.detail || "Failed to load documents.");
     }
+    setDocuments(data.documents ?? []);
   };
 
-  const chooseFile = (pickedFile: File | null) => {
-    if (!pickedFile) return;
-
-    if (!pickedFile.name.toLowerCase().endsWith(".pdf")) {
-      setUploadError("Please choose a PDF file.");
+  const chooseFiles = (pickedFiles: FileList | File[] | null) => {
+    const nextFiles = Array.from(pickedFiles ?? []).filter((file) =>
+      file.name.toLowerCase().endsWith(".pdf")
+    );
+    if (!nextFiles.length) {
+      setUploadError("Please choose one or more PDF files.");
       return;
     }
-
-    setFile(pickedFile);
-    setDocumentReady(false);
-    setDocumentMetrics(null);
-    setDocumentStatus("PDF selected. Ready to process.");
+    setFiles(nextFiles);
     setUploadError(null);
-    setChatError(null);
+    setUploadNotice(null);
   };
 
-  const uploadDocument = async () => {
-    if (!file || uploading) return;
+  const uploadDocuments = async () => {
+    if (!files.length || uploading) return;
 
     setUploading(true);
     setUploadProgress(0);
     setUploadError(null);
-    setChatError(null);
-    setDocumentStatus("Uploading and processing document...");
+    setUploadNotice("Uploading and processing documents...");
 
     const timer = window.setInterval(() => {
-      setUploadProgress((current) => Math.min(current + 7, 92));
+      setUploadProgress((current) => Math.min(current + 6, 92));
     }, 180);
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      for (const file of files) {
+        formData.append("files", file);
+      }
 
       const response = await fetch(`${API_URL}/api/upload`, {
         method: "POST",
         body: formData,
       });
 
-      const data = (await response.json()) as UploadResponse & {
-        detail?: string;
-      };
+      const data = (await response.json()) as UploadResponse & { detail?: string };
 
       if (!response.ok) {
         throw new Error(data.detail || "Upload failed.");
       }
 
       setUploadProgress(100);
-      setDocumentMetrics(data);
-      setDocumentReady(true);
-      setDocumentStatus("Document indexed and ready for chat.");
-      setMessages([
+      await refreshDocuments();
+      setFiles([]);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      const successCount = data.documents?.length ?? 0;
+      const failureCount = data.failures?.length ?? 0;
+      setUploadNotice(
+        failureCount
+          ? `${successCount} document(s) indexed, ${failureCount} failed or were rejected.`
+          : `${successCount} document(s) indexed successfully.`
+      );
+      setMessages((prev) => [
+        ...prev,
         {
           id: createId("assistant"),
           role: "assistant",
-          content: `Document "${data.filename}" has been processed successfully. You can now ask questions about it.`,
+          content:
+            successCount > 0
+              ? "Your documents are now indexed. Ask a question and I’ll search across the whole library."
+              : "No documents were indexed.",
         },
       ]);
     } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Something went wrong while uploading.";
-
-      setUploadError(message);
-      setDocumentStatus("Upload failed. Try another PDF.");
-      setDocumentReady(false);
+      setUploadError(error instanceof Error ? error.message : "Something went wrong while uploading.");
+      setUploadNotice("Upload failed. No new documents were indexed.");
     } finally {
       window.clearInterval(timer);
       setUploading(false);
     }
   };
 
+  const deleteDocument = async (documentId: string) => {
+    startTransition(async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/documents/${documentId}`, {
+          method: "DELETE",
+        });
+        const data = (await response.json()) as { detail?: string };
+        if (!response.ok) {
+          throw new Error(data.detail || "Delete failed.");
+        }
+        await refreshDocuments();
+        setActiveDocumentId((current) => (current === documentId ? null : current));
+      } catch (error) {
+        setDocumentError(error instanceof Error ? error.message : "Failed to delete document.");
+      }
+    });
+  };
+
   const askQuestion = async () => {
-    if (!documentReady || !question.trim() || loading) return;
+    if (!question.trim() || loading) return;
 
     const currentQuestion = question.trim();
     setQuestion("");
@@ -254,12 +255,12 @@ export default function Home() {
         },
         body: JSON.stringify({
           question: currentQuestion,
+          top_k: 5,
+          document_id: activeDocumentId || undefined,
         }),
       });
 
-      const data = (await response.json()) as ChatResponse & {
-        detail?: string;
-      };
+      const data = (await response.json()) as ChatResponse & { detail?: string };
 
       if (!response.ok) {
         throw new Error(data.detail || "Failed to get response.");
@@ -275,16 +276,11 @@ export default function Home() {
         },
       ]);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Something went wrong.";
+      const message = error instanceof Error ? error.message : "Something went wrong.";
       setChatError(message);
       setMessages((prev) => [
         ...prev,
-        {
-          id: createId("assistant"),
-          role: "assistant",
-          content: message,
-        },
+        { id: createId("assistant"), role: "assistant", content: message },
       ]);
     } finally {
       setLoading(false);
@@ -292,24 +288,21 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.16),_transparent_34%),linear-gradient(180deg,#020617_0%,#07111f_52%,#04070d_100%)] text-slate-100">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_35%),linear-gradient(180deg,#020617_0%,#07111f_52%,#04070d_100%)] text-slate-100">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-4 sm:px-6 lg:px-8">
         <header className="mb-4 rounded-3xl border border-white/10 bg-white/5 px-5 py-4 shadow-2xl shadow-cyan-950/20 backdrop-blur-xl">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-400/25 bg-cyan-400/10 text-cyan-200 shadow-lg shadow-cyan-500/10">
-                <DocumentIcon />
-              </div>
-              <div>
-                <p className="text-xs uppercase tracking-[0.28em] text-cyan-200/70">
-                  FinGuard AI
-                </p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
-                  Premium document intelligence dashboard
-                </h1>
-              </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.28em] text-cyan-200/70">
+                FinGuard AI
+              </p>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+                Multi-document RAG workspace
+              </h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                Upload multiple PDFs, inspect their status, delete stale content, and query the full corpus with Gemini.
+              </p>
             </div>
-
             <div className="flex flex-wrap items-center gap-3">
               <div className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200">
                 API connected
@@ -317,24 +310,35 @@ export default function Home() {
               <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
                 {API_URL}
               </div>
+              <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+                {documents.length} documents
+              </div>
             </div>
           </div>
         </header>
 
-        <div className="grid flex-1 gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
+        <div className="grid flex-1 gap-4 lg:grid-cols-[390px_minmax(0,1fr)]">
           <aside className="rounded-3xl border border-white/10 bg-slate-950/70 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5">
             <div className="space-y-4">
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-sm font-semibold text-white">
-                      Upload Document
-                    </p>
+                    <p className="text-sm font-semibold text-white">Upload PDFs</p>
                     <p className="mt-1 text-xs leading-5 text-slate-400">
-                      Drag and drop a PDF or choose one from your device.
+                      Add one or many PDFs. Duplicate files are safely ignored by hash.
                     </p>
                   </div>
-                  <UploadWave active={uploading} />
+                  <div className="flex items-end gap-1">
+                    {[0, 1, 2].map((index) => (
+                      <span
+                        key={index}
+                        className={`h-2 w-2 rounded-full bg-emerald-300 transition-all ${
+                          uploading ? "animate-pulse" : "opacity-40"
+                        }`}
+                        style={{ animationDelay: `${index * 120}ms` }}
+                      />
+                    ))}
+                  </div>
                 </div>
 
                 <label
@@ -353,7 +357,7 @@ export default function Home() {
                   onDrop={(e) => {
                     e.preventDefault();
                     setIsDragging(false);
-                    chooseFile(e.dataTransfer.files?.[0] ?? null);
+                    chooseFiles(e.dataTransfer.files);
                   }}
                   htmlFor={filePickerId}
                   className={`mt-4 flex min-h-44 cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-4 py-6 text-center transition ${
@@ -362,14 +366,11 @@ export default function Home() {
                       : "border-white/15 bg-black/20 hover:border-cyan-300/50 hover:bg-white/5"
                   }`}
                 >
-                  <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400/10 text-cyan-200">
-                    <SparkIcon />
-                  </div>
                   <p className="text-sm font-medium text-white">
-                    {file ? file.name : "Drop your PDF here"}
+                    {files.length ? `${files.length} file(s) selected` : "Drop PDFs here"}
                   </p>
                   <p className="mt-1 text-xs text-slate-500">
-                    PDF only, processed through your FastAPI RAG pipeline
+                    Upload multiple files in one request
                   </p>
                 </label>
 
@@ -378,8 +379,9 @@ export default function Home() {
                   id={filePickerId}
                   type="file"
                   accept="application/pdf,.pdf"
+                  multiple
                   className="hidden"
-                  onChange={(e) => chooseFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => chooseFiles(e.target.files)}
                 />
 
                 <div className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -388,12 +390,12 @@ export default function Home() {
                     onClick={() => fileInputRef.current?.click()}
                     className="inline-flex flex-1 items-center justify-center rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/10"
                   >
-                    Choose PDF
+                    Choose PDFs
                   </button>
                   <button
                     type="button"
-                    onClick={uploadDocument}
-                    disabled={!file || uploading}
+                    onClick={uploadDocuments}
+                    disabled={!files.length || uploading}
                     className="inline-flex flex-1 items-center justify-center rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-4 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {uploading ? "Processing..." : "Upload & Index"}
@@ -408,7 +410,7 @@ export default function Home() {
                   <div className="h-2 overflow-hidden rounded-full bg-white/10">
                     <div
                       className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-400 transition-all duration-300"
-                      style={{ width: `${uploading ? uploadProgress : documentReady ? 100 : 0}%` }}
+                      style={{ width: `${uploading ? uploadProgress : 0}%` }}
                     />
                   </div>
                 </div>
@@ -418,99 +420,118 @@ export default function Home() {
                     {uploadError}
                   </div>
                 ) : null}
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                    Selected Document
-                  </p>
-                  <p className="mt-2 break-words text-sm font-medium text-white">
-                    {selectedFileName}
-                  </p>
-                  <p className="mt-2 text-xs text-slate-400">
-                    {documentReady ? "Ready for chat" : "Not processed yet"}
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                    Processing Status
-                  </p>
-                  <p className="mt-2 text-sm font-medium text-white">
-                    {documentStatus}
-                  </p>
-                  <p className="mt-2 text-xs text-slate-400">
-                    {documentReady
-                      ? "Conversation unlocked"
-                      : "Chat remains locked until indexing is complete"}
-                  </p>
-                </div>
+                {uploadNotice ? (
+                  <div className="mt-4 rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-3 text-sm text-cyan-100">
+                    {uploadNotice}
+                  </div>
+                ) : null}
               </div>
 
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                    Documents
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold text-white">
-                    {documentCount}
-                  </p>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Documents</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{formatNumber(documents.length)}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                    Chunks
-                  </p>
-                  <p className="mt-2 text-2xl font-semibold text-white">
-                    {formatNumber(documentMetrics?.chunks_stored ?? 0)}
-                  </p>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Ready</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{formatNumber(readyDocuments.length)}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">
-                    System Status
-                  </p>
-                  <p className="mt-2 text-sm font-medium text-white">
-                    {documentReady ? "Operational" : "Awaiting upload"}
-                  </p>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Chunks</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{formatNumber(totalChunks)}</p>
                 </div>
               </div>
 
-              {documentMetrics ? (
-                <div className="rounded-2xl border border-cyan-400/15 bg-cyan-400/5 p-4">
-                  <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">
-                    Document Metrics
-                  </p>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs text-slate-500">Characters</p>
-                      <p className="mt-1 text-sm font-medium text-white">
-                        {formatNumber(documentMetrics.characters_extracted)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">Chunks Created</p>
-                      <p className="mt-1 text-sm font-medium text-white">
-                        {formatNumber(documentMetrics.chunks_created)}
-                      </p>
-                    </div>
-                  </div>
-                  <p className="mt-4 text-xs text-slate-400">
-                    {documentMetrics.preview
-                      ? `Preview: ${documentMetrics.preview.slice(0, 120)}${
-                          documentMetrics.preview.length > 120 ? "..." : ""
-                        }`
-                      : "Preview unavailable."}
-                  </p>
-                </div>
-              ) : null}
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Active Query Scope</p>
+                <p className="mt-2 text-sm font-medium text-white">
+                  {selectedDocument ? selectedDocument.filename : "All documents"}
+                </p>
+                <p className="mt-2 text-xs text-slate-400">
+                  {selectedDocument
+                    ? "Chat searches within this document only."
+                    : "Chat searches across the full corpus."}
+                </p>
+              </div>
 
-              <button
-                type="button"
-                onClick={resetDocument}
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-200 transition hover:bg-white/10"
-              >
-                Reset workspace
-              </button>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-white">Uploaded Documents</p>
+                  <button
+                    type="button"
+                    onClick={() => void refreshDocuments()}
+                    className="text-xs text-cyan-200 hover:text-cyan-100"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                <div className="mt-3 space-y-3">
+                  {documentError ? (
+                    <p className="rounded-2xl border border-rose-400/20 bg-rose-500/10 p-3 text-sm text-rose-100">
+                      {documentError}
+                    </p>
+                  ) : null}
+                  {documentsLoading ? (
+                    <p className="text-sm text-slate-400">Loading documents...</p>
+                  ) : documents.length === 0 ? (
+                    <p className="text-sm text-slate-400">No documents uploaded yet.</p>
+                  ) : (
+                    documents.map((document) => (
+                      <div
+                        key={document.document_id}
+                        className={`rounded-2xl border p-3 transition ${statusStyle(document.status)} ${
+                          activeDocumentId === document.document_id ? "ring-1 ring-cyan-300/50" : ""
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setActiveDocumentId((current) =>
+                              current === document.document_id ? null : document.document_id
+                            )
+                          }
+                          className="w-full text-left"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-white">{document.filename}</p>
+                              <p className="mt-1 text-xs text-slate-300">
+                                {document.chunks_stored} chunks · {timeLabel(document.updated_at)}
+                              </p>
+                            </div>
+                            <span className="rounded-full border px-2 py-1 text-[11px] font-medium uppercase tracking-[0.18em]">
+                              {document.status}
+                            </span>
+                          </div>
+                        </button>
+                        {document.error ? (
+                          <p className="mt-2 text-xs text-rose-100">{document.error}</p>
+                        ) : null}
+                        {document.preview ? (
+                          <p className="mt-2 line-clamp-3 text-xs text-slate-300">{document.preview}</p>
+                        ) : null}
+                        <div className="mt-3 flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setActiveDocumentId(document.document_id)}
+                            className="text-xs text-cyan-200 hover:text-cyan-100"
+                          >
+                            Ask about this
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void deleteDocument(document.document_id)}
+                            disabled={isPending}
+                            className="text-xs text-rose-200 hover:text-rose-100 disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </aside>
 
@@ -519,198 +540,106 @@ export default function Home() {
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div>
                   <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/70">
-                    Chat Workspace
+                    Retrieval chat
                   </p>
                   <h2 className="mt-1 text-xl font-semibold text-white">
-                    Document Q&A with source citations
+                    Search across all uploaded documents
                   </h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    Ask follow-up questions once the PDF is indexed. Responses
-                    include backend-provided sources when available.
+                    Every answer includes the source document name for each retrieved chunk.
                   </p>
                 </div>
-
                 <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`h-2.5 w-2.5 rounded-full ${
-                        documentReady ? "bg-emerald-400" : "bg-amber-400"
-                      }`}
-                    />
-                    <span>{documentReady ? "Ready" : "Locked until upload"}</span>
-                  </div>
+                  {selectedDocument ? `Scoped to ${selectedDocument.filename}` : "Scoped to the full corpus"}
                 </div>
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+            <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
               {messages.length === 0 ? (
-                <div className="flex min-h-[54vh] flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/[0.03] px-6 text-center">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-400/20 bg-cyan-400/10 text-cyan-200">
-                    <SparkIcon />
-                  </div>
-                  <h3 className="mt-5 text-xl font-semibold text-white">
-                    Your conversation will appear here
-                  </h3>
-                  <p className="mt-2 max-w-xl text-sm leading-6 text-slate-400">
-                    Upload a PDF from the sidebar to unlock the chat. Once the
-                    backend finishes processing, you can ask about figures,
-                    clauses, summaries, and key insights.
-                  </p>
-                  <div className="mt-6 grid gap-3 text-left sm:grid-cols-3">
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-sm font-medium text-white">
-                        Fast upload flow
-                      </p>
-                      <p className="mt-1 text-xs leading-5 text-slate-400">
-                        Drag, drop, and process PDFs directly from the browser.
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-sm font-medium text-white">
-                        Source-aware answers
-                      </p>
-                      <p className="mt-1 text-xs leading-5 text-slate-400">
-                        Assistant responses display source chunks from the RAG
-                        backend.
-                      </p>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-                      <p className="text-sm font-medium text-white">
-                        Locked until ready
-                      </p>
-                      <p className="mt-1 text-xs leading-5 text-slate-400">
-                        Prevents queries before document indexing completes.
-                      </p>
-                    </div>
+                <div className="flex h-full min-h-[360px] items-center justify-center rounded-3xl border border-dashed border-white/10 bg-white/5 p-8 text-center">
+                  <div className="max-w-lg">
+                    <p className="text-lg font-semibold text-white">Ask a question once your PDFs are indexed.</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-400">
+                      Try asking for comparisons, totals, risk signals, or any detail that may be spread across several files.
+                    </p>
                   </div>
                 </div>
               ) : (
-                <div className="space-y-5">
-                  {messages.map((message) => {
-                    const isUser = message.role === "user";
-
-                    return (
+                <div className="space-y-4">
+                  {messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                    >
                       <div
-                        key={message.id}
-                        className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+                        className={`max-w-[92%] rounded-3xl border px-4 py-3 shadow-lg sm:max-w-[80%] ${
+                          message.role === "user"
+                            ? "border-cyan-400/20 bg-cyan-400/10 text-cyan-50"
+                            : "border-white/10 bg-white/5 text-slate-100"
+                        }`}
                       >
-                        <div
-                          className={`max-w-[92%] rounded-[1.5rem] border px-4 py-3 shadow-lg sm:max-w-[80%] sm:px-5 ${
-                            isUser
-                              ? "border-cyan-400/20 bg-gradient-to-br from-cyan-400 to-emerald-300 text-slate-950"
-                              : "border-white/10 bg-white/5 text-slate-100"
-                          }`}
-                        >
-                          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.22em] opacity-70">
-                            <span>{isUser ? "You" : "FinGuard AI"}</span>
-                          </div>
-                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 sm:text-[15px]">
-                            {message.content}
-                          </p>
-
-                          {message.sources?.length ? (
-                            <div className="mt-4 border-t border-white/10 pt-3">
-                              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                                Sources
-                              </p>
-                              <div className="mt-2 space-y-2">
-                                {message.sources.map((source, index) => (
-                                  <div
-                                    key={`${source.filename}-${source.chunk_index}-${index}`}
-                                    className="rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-300"
-                                  >
-                                    <span className="font-medium text-white">
-                                      {source.filename}
-                                    </span>
-                                    <span className="text-slate-500">
-                                      {" "}
-                                      · Chunk {source.chunk_index}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
+                        <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+                        {message.sources?.length ? (
+                          <div className="mt-3 border-t border-white/10 pt-3">
+                            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Sources</p>
+                            <div className="mt-2 space-y-2">
+                              {message.sources.map((source, index) => (
+                                <div
+                                  key={`${source.document_id ?? "source"}-${index}`}
+                                  className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-300"
+                                >
+                                  <p className="font-medium text-white">
+                                    {source.filename ?? "Unknown document"}
+                                  </p>
+                                  <p className="mt-1">
+                                    Chunk {source.chunk_index ?? index}
+                                    {source.document_id ? ` · ${source.document_id}` : ""}
+                                  </p>
+                                </div>
+                              ))}
                             </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {loading ? (
-                    <div className="flex justify-start">
-                      <div className="max-w-[92%] rounded-[1.5rem] border border-white/10 bg-white/5 px-4 py-4 shadow-lg sm:max-w-[80%] sm:px-5">
-                        <TypingIndicator />
+                          </div>
+                        ) : null}
                       </div>
                     </div>
-                  ) : null}
-
+                  ))}
                   <div ref={chatEndRef} />
                 </div>
               )}
             </div>
 
             <div className="border-t border-white/10 p-4 sm:p-6">
-              {chatError ? (
-                <div className="mb-4 rounded-2xl border border-rose-400/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
-                  {chatError}
+              <div className="space-y-3">
+                <textarea
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void askQuestion();
+                    }
+                  }}
+                  rows={3}
+                  placeholder="Ask about the uploaded documents..."
+                  className="w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/40"
+                />
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-slate-400">
+                    Enter sends, Shift+Enter adds a line break.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={askQuestion}
+                    disabled={!question.trim() || loading}
+                    className="inline-flex items-center justify-center rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {loading ? "Searching..." : "Ask Gemini"}
+                  </button>
                 </div>
-              ) : null}
-
-              <div className="rounded-[1.5rem] border border-white/10 bg-black/30 p-3 shadow-inner shadow-black/20">
-                <div className="flex flex-col gap-3 md:flex-row md:items-end">
-                  <div className="flex-1">
-                    <label className="mb-2 block text-xs uppercase tracking-[0.22em] text-slate-500">
-                      Ask a question
-                    </label>
-                    <textarea
-                      value={question}
-                      onChange={(e) => setQuestion(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          void askQuestion();
-                        }
-                      }}
-                      rows={3}
-                      disabled={!documentReady || loading}
-                      placeholder={
-                        documentReady
-                          ? "Ask about clauses, numbers, summaries, risks, or specific sections..."
-                          : "Upload and process a PDF first"
-                      }
-                      className="w-full resize-none rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/40 disabled:cursor-not-allowed disabled:opacity-50"
-                    />
-                  </div>
-
-                  <div className="flex gap-3 md:flex-col">
-                    <button
-                      type="button"
-                      onClick={uploadDocument}
-                      disabled={!file || uploading}
-                      className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40 md:w-36"
-                    >
-                      {uploading ? "Working..." : "Reprocess"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void askQuestion()}
-                      disabled={!documentReady || !question.trim() || loading}
-                      className="rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40 md:w-36"
-                    >
-                      {loading ? "Sending..." : "Send"}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-col gap-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
-                  <span>Press Enter to send, Shift+Enter for a new line.</span>
-                  <span>
-                    {documentReady
-                      ? "Chat is enabled"
-                      : "Chat is disabled until processing finishes"}
-                  </span>
-                </div>
+                {chatError ? (
+                  <p className="text-sm text-rose-200">{chatError}</p>
+                ) : null}
               </div>
             </div>
           </section>
