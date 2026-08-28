@@ -7,6 +7,7 @@ from langchain_core.documents import Document
 
 from app.config import get_settings
 from app.services.llm_service import generate_answer as generate_llm_answer
+from app.services.llm_service import rewrite_query
 from app.services.vector_service import similarity_search_with_scores
 
 
@@ -106,6 +107,18 @@ def _clip_context(context_parts: list[str], max_chars: int) -> str:
     return "".join(context)
 
 
+def _format_chat_history(chat_history: list[dict[str, str]], max_turns: int = 6) -> str:
+    recent_turns = chat_history[-max_turns:]
+    lines: list[str] = []
+    for turn in recent_turns:
+        role = turn.get("role", "").strip().lower()
+        content = " ".join(turn.get("content", "").split()).strip()
+        if not role or not content:
+            continue
+        lines.append(f"{role.title()}: {content}")
+    return "\n".join(lines)
+
+
 def search_documents(query: str, k: int = 4, document_id: str | None = None) -> list[dict[str, object]]:
     settings = get_settings()
     processed_query = preprocess_query(query)
@@ -151,14 +164,30 @@ def search_documents(query: str, k: int = 4, document_id: str | None = None) -> 
     ]
 
 
-def generate_answer(query: str, k: int = 4, document_id: str | None = None):
+def generate_answer(
+    query: str,
+    k: int = 4,
+    document_id: str | None = None,
+    chat_history: list[dict[str, str]] | None = None,
+):
     settings = get_settings()
-    results = search_documents(query, k=k, document_id=document_id)
+    history_text = _format_chat_history(chat_history or [], max_turns=6)
+    contextualized_query = query
+    if history_text:
+        try:
+            contextualized_query = rewrite_query(query=query, chat_history=history_text)
+        except HTTPException:
+            raise
+        except Exception:
+            contextualized_query = query
+
+    results = search_documents(contextualized_query, k=k, document_id=document_id)
 
     if not results:
         return {
             "answer": "I couldn't find relevant information in the uploaded documents.",
             "sources": [],
+            "contextualized_query": contextualized_query,
         }
 
     context_parts: list[str] = []
@@ -174,7 +203,7 @@ def generate_answer(query: str, k: int = 4, document_id: str | None = None):
     context = _clip_context(context_parts, settings.retrieval_max_context_chars)
 
     try:
-        answer = generate_llm_answer(context=context, question=query)
+        answer = generate_llm_answer(context=context, question=contextualized_query)
     except HTTPException:
         raise
     except Exception as exc:
@@ -183,4 +212,5 @@ def generate_answer(query: str, k: int = 4, document_id: str | None = None):
     return {
         "answer": answer,
         "sources": sources,
+        "contextualized_query": contextualized_query,
     }

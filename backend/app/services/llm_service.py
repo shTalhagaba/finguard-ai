@@ -31,11 +31,36 @@ When sources include page numbers or relevance details, use them if they help an
 CONTEXT:
 {context}
 
-QUESTION:
-{question}
+    QUESTION:
+    {question}
 """
 
 
 def generate_answer(context: str, question: str) -> str:
     response = get_llm().invoke(build_prompt(context, question))
     return response.content
+
+
+def build_query_rewrite_prompt(question: str, chat_history: str) -> str:
+    return f"""You are FinGuard AI's query rewriter.
+
+Rewrite the user's latest question into a standalone retrieval query.
+Use the conversation history only to resolve references, pronouns, and implied scopes.
+Do not answer the question.
+Do not add facts, assumptions, or details not present in the user's words or the conversation history.
+If the latest question is already standalone, return it unchanged.
+If the latest question is too vague to rewrite safely, return it unchanged.
+Preserve the user's intent and important qualifiers.
+
+CONVERSATION HISTORY:
+{chat_history}
+
+LATEST QUESTION:
+{question}
+"""
+
+
+def rewrite_query(question: str, chat_history: str) -> str:
+    response = get_llm().invoke(build_query_rewrite_prompt(question, chat_history))
+    rewritten = response.content.strip()
+    return rewritten or question
