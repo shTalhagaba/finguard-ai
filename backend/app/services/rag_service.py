@@ -18,6 +18,37 @@ class RankedChunk:
     rank_score: float
 
 
+TASK_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "kyc_policy_qa": ("kyc", "know your customer", "customer identification", "customer due diligence", "cdd"),
+    "aml_policy_qa": ("aml", "anti money laundering", "anti-money laundering", "money laundering", "suspicious activity"),
+    "transaction_policy_analysis": ("transaction policy", "transaction limit", "transfer limit", "wire", "domestic transfer", "international transfer"),
+    "refund_policy_analysis": ("refund", "chargeback", "return period", "reversal"),
+    "fraud_policy_qa": ("fraud", "fraud monitoring", "fraud detection", "alerts", "suspicious transaction"),
+    "compliance_document_qa": ("compliance", "regulatory", "policy", "controls", "governance"),
+    "policy_comparison": ("compare", "comparison", "difference between", "versus", "vs"),
+    "extract_financial_limits": ("limit", "threshold", "maximum", "minimum", "cap", "ceiling"),
+    "extract_fees": ("fee", "fees", "charges", "pricing", "commission"),
+    "extract_important_dates": ("date", "deadline", "effective", "expiry", "expiration", "renewal", "review date"),
+    "summarize_policies": ("summarize", "summary", "summarise", "briefly explain", "overview"),
+    "explain_simple_language": ("simple language", "plain language", "easy to understand", "explain simply", "layman"),
+}
+
+TASK_ORDER = [
+    "policy_comparison",
+    "extract_financial_limits",
+    "extract_fees",
+    "extract_important_dates",
+    "summarize_policies",
+    "explain_simple_language",
+    "kyc_policy_qa",
+    "aml_policy_qa",
+    "fraud_policy_qa",
+    "transaction_policy_analysis",
+    "refund_policy_analysis",
+    "compliance_document_qa",
+]
+
+
 def preprocess_query(query: str) -> str:
     normalized = " ".join(query.split()).strip()
     normalized = re.sub(r"[^\w\s\-./]", " ", normalized)
@@ -107,6 +138,42 @@ def _clip_context(context_parts: list[str], max_chars: int) -> str:
     return "".join(context)
 
 
+def _detect_task(query: str) -> str:
+    normalized = query.lower()
+    for task in TASK_ORDER:
+        terms = TASK_KEYWORDS[task]
+        if any(term in normalized for term in terms):
+            return task
+    return "general_policy_qa"
+
+
+def _build_task_instructions(task: str) -> str:
+    task_guidance = {
+        "kyc_policy_qa": "Focus on KYC identity checks, onboarding controls, beneficial ownership, verification steps, documents required, and any exceptions or thresholds stated in the policies.",
+        "aml_policy_qa": "Focus on AML monitoring, due diligence, sanctions screening, suspicious activity handling, escalation paths, and reporting requirements stated in the policies.",
+        "transaction_policy_analysis": "Focus on transfer types, limits, caps, transaction rules, permitted channels, and conditions that change the effective limit.",
+        "refund_policy_analysis": "Focus on refund eligibility, refund windows, reversal rules, chargebacks, exclusions, and any time-based conditions.",
+        "fraud_policy_qa": "Focus on monitoring triggers, alert conditions, manual review steps, fraud indicators, and escalation or freeze procedures stated in the policies.",
+        "compliance_document_qa": "Focus on compliance obligations, controls, ownership, audits, retention, escalation, and any formal requirements described in the documents.",
+        "policy_comparison": "Compare the relevant policies or policy sections side by side. State similarities, differences, and any conflicting or more specific terms using only the context.",
+        "extract_financial_limits": "Extract all monetary limits, thresholds, caps, and boundaries. Include currency, direction, scope, channel, and exceptions if present.",
+        "extract_fees": "Extract all fees, charges, and pricing terms. Include amount, frequency, trigger, currency, and waiver or exemption conditions if present.",
+        "extract_important_dates": "Extract deadlines, effective dates, cutoff dates, review dates, expiration dates, renewal periods, and any other important time limits.",
+        "summarize_policies": "Summarize the policy clearly and compactly. Preserve the major obligations, limits, exceptions, and risk controls.",
+        "explain_simple_language": "Rewrite the policy in plain language without changing the meaning. Keep it easy to understand and faithful to the source.",
+        "general_policy_qa": "Answer the question directly from the uploaded policy text and stay anchored to the exact language when possible.",
+    }
+    return task_guidance.get(task, task_guidance["general_policy_qa"])
+
+
+def build_task_profile(query: str) -> dict[str, str]:
+    task = _detect_task(query)
+    return {
+        "task": task,
+        "instructions": _build_task_instructions(task),
+    }
+
+
 def _format_chat_history(chat_history: list[dict[str, str]], max_turns: int = 6) -> str:
     recent_turns = chat_history[-max_turns:]
     lines: list[str] = []
@@ -171,6 +238,7 @@ def generate_answer(
     chat_history: list[dict[str, str]] | None = None,
 ):
     settings = get_settings()
+    task_profile = build_task_profile(query)
     history_text = _format_chat_history(chat_history or [], max_turns=6)
     contextualized_query = query
     if history_text:
@@ -181,7 +249,11 @@ def generate_answer(
         except Exception:
             contextualized_query = query
 
-    results = search_documents(contextualized_query, k=k, document_id=document_id)
+    retrieval_query = contextualized_query
+    if task_profile["task"] in {"policy_comparison", "extract_financial_limits", "extract_fees", "extract_important_dates"}:
+        retrieval_query = f"{contextualized_query} {task_profile['instructions']}"
+
+    results = search_documents(retrieval_query, k=k, document_id=document_id)
 
     if not results:
         return {
@@ -203,7 +275,14 @@ def generate_answer(
     context = _clip_context(context_parts, settings.retrieval_max_context_chars)
 
     try:
-        answer = generate_llm_answer(context=context, question=contextualized_query)
+        answer = generate_llm_answer(
+            context=context,
+            question=(
+                f"Task: {task_profile['task']}\n"
+                f"Guidance: {task_profile['instructions']}\n"
+                f"User question: {contextualized_query}"
+            ),
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -213,4 +292,5 @@ def generate_answer(
         "answer": answer,
         "sources": sources,
         "contextualized_query": contextualized_query,
+        "task": task_profile["task"],
     }

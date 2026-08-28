@@ -24,8 +24,13 @@ def build_prompt(context: str, question: str) -> str:
 
 Use only the provided context to answer the question.
 If the context does not contain enough information, say that clearly.
-Do not invent facts or rely on outside knowledge.
+Do not invent facts, infer missing policy language, or rely on outside knowledge.
+Do not provide legal, compliance, or financial advice beyond what the documents state.
 Keep the answer concise, professional, and useful.
+When the user asks for KYC, AML, fraud, refund, transaction, or compliance policy details, answer from the uploaded policies only.
+When the user asks for a comparison, contrast the relevant policy terms side by side.
+When the user asks to extract limits, fees, or dates, return the specific values and the surrounding conditions if present.
+When the user asks for a summary or simple explanation, keep the wording plain and grounded in the source text.
 When sources include page numbers or relevance details, use them if they help answer the question.
 
 CONTEXT:
@@ -48,6 +53,7 @@ Rewrite the user's latest question into a standalone retrieval query.
 Use the conversation history only to resolve references, pronouns, and implied scopes.
 Do not answer the question.
 Do not add facts, assumptions, or details not present in the user's words or the conversation history.
+Preserve policy names, document types, amounts, dates, fees, thresholds, and comparison targets exactly when they appear.
 If the latest question is already standalone, return it unchanged.
 If the latest question is too vague to rewrite safely, return it unchanged.
 Preserve the user's intent and important qualifiers.
