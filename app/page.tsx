@@ -61,6 +61,21 @@ type ChatTurn = {
   content: string;
 };
 
+type AuthState = {
+  accessToken: string;
+  user: {
+    id: string;
+    email: string;
+    display_name: string;
+  };
+};
+
+type AuthResponsePayload = {
+  access_token: string;
+  token_type: string;
+  user: AuthState["user"];
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 const MAX_HISTORY_TURNS = 8;
 const MAX_HISTORY_CHARS = 1600;
@@ -114,6 +129,23 @@ function buildChatHistory(messages: Message[]): ChatTurn[] {
 }
 
 export default function Home() {
+  const [auth, setAuth] = useState<AuthState | null>(() => {
+    if (typeof window === "undefined") return null;
+    const saved = window.localStorage.getItem("finguard-auth");
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved) as AuthState;
+    } catch {
+      window.localStorage.removeItem("finguard-auth");
+      return null;
+    }
+  });
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authName, setAuthName] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -141,17 +173,32 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const filePickerId = useMemo(() => `pdf-${createId("picker")}`, []);
+  const authHeaders = useMemo(
+    () =>
+      auth
+        ? {
+            Authorization: `Bearer ${auth.accessToken}`,
+          }
+        : {},
+    [auth]
+  );
+
+  useEffect(() => {
+    if (!auth) return;
+    window.localStorage.setItem("finguard-auth", JSON.stringify(auth));
+  }, [auth]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, loading]);
 
   useEffect(() => {
+    if (!auth) return;
     const loadDocuments = async () => {
       setDocumentsLoading(true);
       setDocumentError(null);
       try {
-        const response = await fetch(`${API_URL}/api/documents`);
+        const response = await fetch(`${API_URL}/api/documents`, { headers: authHeaders });
         const data = (await response.json()) as { documents?: DocumentRecord[]; detail?: string };
         if (!response.ok) {
           throw new Error(data.detail || "Failed to load documents.");
@@ -172,7 +219,7 @@ export default function Home() {
     };
 
     void loadDocuments();
-  }, []);
+  }, [auth, authHeaders]);
 
   const readyDocuments = documents.filter((document) => document.status === "completed");
   const selectedDocument = documents.find((document) => document.document_id === activeDocumentId) ?? null;
@@ -180,7 +227,7 @@ export default function Home() {
   const totalChunks = documents.reduce((sum, document) => sum + document.chunks_stored, 0);
 
   const refreshDocuments = async () => {
-    const response = await fetch(`${API_URL}/api/documents`);
+    const response = await fetch(`${API_URL}/api/documents`, { headers: authHeaders });
     const data = (await response.json()) as { documents?: DocumentRecord[]; detail?: string };
     if (!response.ok) {
       throw new Error(data.detail || "Failed to load documents.");
@@ -221,6 +268,7 @@ export default function Home() {
 
       const response = await fetch(`${API_URL}/api/upload`, {
         method: "POST",
+        headers: authHeaders,
         body: formData,
       });
 
@@ -268,6 +316,7 @@ export default function Home() {
       try {
         const response = await fetch(`${API_URL}/api/documents/${documentId}`, {
           method: "DELETE",
+          headers: authHeaders,
         });
         const data = (await response.json()) as { detail?: string };
         if (!response.ok) {
@@ -299,6 +348,7 @@ export default function Home() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...authHeaders,
         },
         body: JSON.stringify({
           question: currentQuestion,
@@ -354,6 +404,23 @@ export default function Home() {
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
+              {auth ? (
+                <>
+                  <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+                    {auth.user.display_name}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuth(null);
+                      window.localStorage.removeItem("finguard-auth");
+                    }}
+                    className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300 hover:bg-white/10"
+                  >
+                    Sign out
+                  </button>
+                </>
+              ) : null}
               <div className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 text-xs font-medium text-emerald-200">
                 API connected
               </div>
@@ -370,6 +437,55 @@ export default function Home() {
         <div className="grid flex-1 gap-4 lg:grid-cols-[390px_minmax(0,1fr)]">
           <aside className="rounded-3xl border border-white/10 bg-slate-950/70 p-4 shadow-2xl shadow-black/20 backdrop-blur-xl sm:p-5">
             <div className="space-y-4">
+              {!auth ? (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                  <p className="text-sm font-semibold text-white">Secure access</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-400">
+                    Register or sign in to isolate documents, vectors, and chat history to your account.
+                  </p>
+                  <div className="mt-4 flex gap-2">
+                    <button type="button" onClick={() => setAuthMode("login")} className={`rounded-full px-3 py-1 text-xs ${authMode === "login" ? "bg-cyan-400 text-slate-950" : "border border-white/10 bg-white/5 text-slate-300"}`}>Login</button>
+                    <button type="button" onClick={() => setAuthMode("register")} className={`rounded-full px-3 py-1 text-xs ${authMode === "register" ? "bg-cyan-400 text-slate-950" : "border border-white/10 bg-white/5 text-slate-300"}`}>Register</button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {authMode === "register" ? (
+                      <input value={authName} onChange={(e) => setAuthName(e.target.value)} placeholder="Display name" className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                    ) : null}
+                    <input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="Email" className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                    <input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} type="password" placeholder="Password" className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none" />
+                    {authError ? <p className="text-xs text-rose-200">{authError}</p> : null}
+                    <button
+                      type="button"
+                      disabled={authLoading}
+                      onClick={async () => {
+                        setAuthLoading(true);
+                        setAuthError(null);
+                        try {
+                          const response = await fetch(`${API_URL}/api/auth/${authMode}`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(
+                              authMode === "register"
+                                ? { email: authEmail, password: authPassword, display_name: authName }
+                                : { email: authEmail, password: authPassword }
+                            ),
+                          });
+                          const data = (await response.json()) as AuthResponsePayload & { detail?: string };
+                          if (!response.ok) throw new Error(data.detail || "Authentication failed.");
+                          setAuth({ accessToken: data.access_token, user: data.user });
+                        } catch (error) {
+                          setAuthError(error instanceof Error ? error.message : "Authentication failed.");
+                        } finally {
+                          setAuthLoading(false);
+                        }
+                      }}
+                      className="w-full rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950"
+                    >
+                      {authLoading ? "Working..." : authMode === "register" ? "Create account" : "Sign in"}
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
