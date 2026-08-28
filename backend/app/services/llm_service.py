@@ -26,6 +26,7 @@ Use only the provided context to answer the question.
 If the context does not contain enough information, say that clearly.
 Do not invent facts or rely on outside knowledge.
 Keep the answer concise, professional, and useful.
+When sources include page numbers or relevance details, use them if they help answer the question.
 
 CONTEXT:
 {context}

@@ -19,6 +19,7 @@ from app.services.document_registry import (
 )
 from app.services.document_service import (
     build_preview,
+    extract_pages_from_pdf,
     extract_text_from_pdf,
     split_text_into_chunks,
 )
@@ -104,11 +105,22 @@ async def upload_documents(files: list[UploadFile] = File(...)):
 
         try:
             file_path.write_bytes(content)
+            page_blocks = extract_pages_from_pdf(str(file_path))
             extracted_text = extract_text_from_pdf(str(file_path))
             if not extracted_text.strip():
                 raise HTTPException(status_code=400, detail="Could not extract text from this PDF.")
 
-            chunks = split_text_into_chunks(extracted_text)
+            chunks = []
+            for page in page_blocks:
+                page_chunks = split_text_into_chunks(str(page["text"]))
+                for chunk in page_chunks:
+                    chunk.setdefault("metadata", {})
+                    chunk["metadata"] = {
+                        **dict(chunk["metadata"]),
+                        "page_number": page["page_number"],
+                    }
+                    chunks.append(chunk)
+
             chunks_stored = add_document_chunks(
                 chunks=chunks,
                 document_id=document_id,

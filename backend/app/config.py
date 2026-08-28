@@ -28,6 +28,12 @@ class Settings(BaseModel):
     gemini_chat_model: str = "gemini-2.5-flash"
     chunk_size: int = 1000
     chunk_overlap: int = 200
+    chunk_min_size: int = 200
+    retrieval_initial_k: int = 12
+    retrieval_max_context_chunks: int = 6
+    retrieval_max_context_chars: int = 12000
+    retrieval_min_relevance_score: float = 0.2
+    retrieval_max_results: int = 10
     max_upload_size_mb: int = 20
 
 

@@ -31,7 +31,7 @@ def get_vector_store() -> Chroma:
 
 def add_document_chunks(
     *,
-    chunks: list[str],
+    chunks: list[dict[str, object]],
     document_id: str,
     filename: str,
     stored_as: str,
@@ -43,12 +43,13 @@ def add_document_chunks(
     ids = [f"{document_id}:{index}" for index in range(len(chunks))]
     documents = [
         Document(
-            page_content=chunk,
+            page_content=str(chunk["text"]),
             metadata={
                 "document_id": document_id,
                 "filename": filename,
                 "stored_as": stored_as,
                 "chunk_index": index,
+                **dict(chunk.get("metadata", {})),
             },
         )
         for index, chunk in enumerate(chunks)
@@ -60,6 +61,25 @@ def add_document_chunks(
 def similarity_search(query: str, k: int = 4, document_id: str | None = None) -> list[Document]:
     filter_kwargs = {"document_id": document_id} if document_id else None
     return get_vector_store().similarity_search(query=query, k=k, filter=filter_kwargs)
+
+
+def similarity_search_with_scores(
+    query: str,
+    k: int = 4,
+    document_id: str | None = None,
+) -> list[tuple[Document, float]]:
+    vector_store = get_vector_store()
+    filter_kwargs = {"document_id": document_id} if document_id else None
+
+    if hasattr(vector_store, "similarity_search_with_relevance_scores"):
+        return vector_store.similarity_search_with_relevance_scores(
+            query=query,
+            k=k,
+            filter=filter_kwargs,
+        )
+
+    documents = vector_store.similarity_search(query=query, k=k, filter=filter_kwargs)
+    return [(document, 0.0) for document in documents]
 
 
 def delete_document_chunks(document_id: str, chunk_count: int) -> None:
