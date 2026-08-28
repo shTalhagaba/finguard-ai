@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -27,7 +28,7 @@ class Settings(BaseModel):
             if origin.strip()
         ]
     )
-    google_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
+    google_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
     chroma_persist_directory: Path = Field(
         default_factory=lambda: Path(os.getenv("CHROMA_PERSIST_DIRECTORY", BASE_DIR / "chroma_db"))
     )
