@@ -44,6 +44,7 @@ type ChatResponse = {
   answer: string;
   sources?: Source[];
   contextualized_query?: string;
+  task?: string;
 };
 
 type Message = {
@@ -52,6 +53,7 @@ type Message = {
   content: string;
   sources?: Source[];
   contextualizedQuery?: string;
+  task?: string;
 };
 
 type ChatTurn = {
@@ -127,6 +129,14 @@ export default function Home() {
   const [chatError, setChatError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [activeDocumentId, setActiveDocumentId] = useState<string | null>(null);
+  const exampleQuestions = [
+    "What are the KYC requirements?",
+    "What is the international transfer limit?",
+    "Compare domestic and international transfer limits.",
+    "What is the refund period?",
+    "Which transactions can trigger fraud monitoring?",
+    "Summarize the AML policy.",
+  ];
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -240,7 +250,7 @@ export default function Home() {
           role: "assistant",
           content:
             successCount > 0
-              ? "Your documents are now indexed. Ask a question and I’ll search across the whole library."
+              ? "Your documents are now indexed. Ask about KYC, AML, fraud, refunds, limits, fees, dates, or policy comparisons, and I’ll stay grounded in the uploaded files."
               : "No documents were indexed.",
         },
       ]);
@@ -312,6 +322,7 @@ export default function Home() {
           content: data.answer,
           sources: data.sources,
           contextualizedQuery: data.contextualized_query,
+          task: data.task,
         },
       ]);
     } catch (error) {
@@ -338,8 +349,8 @@ export default function Home() {
               <h1 className="mt-1 text-2xl font-semibold tracking-tight text-white sm:text-3xl">
                 Multi-document RAG workspace
               </h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-                Upload multiple PDFs, inspect their status, delete stale content, and query the full corpus with Gemini.
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                Upload multiple PDFs, inspect their status, delete stale content, and ask targeted FinTech policy questions from the uploaded corpus only.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-3">
@@ -600,8 +611,20 @@ export default function Home() {
                   <div className="max-w-lg">
                     <p className="text-lg font-semibold text-white">Ask a question once your PDFs are indexed.</p>
                     <p className="mt-2 text-sm leading-6 text-slate-400">
-                      Try asking for comparisons, totals, risk signals, or any detail that may be spread across several files.
+                      Try asking for KYC requirements, AML controls, fraud triggers, refund periods, limits, fees, dates, comparisons, or plain-language summaries.
                     </p>
+                    <div className="mt-4 flex flex-wrap justify-center gap-2">
+                      {exampleQuestions.map((example) => (
+                        <button
+                          key={example}
+                          type="button"
+                          onClick={() => setQuestion(example)}
+                          className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-400/10 hover:text-white"
+                        >
+                          {example}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -618,6 +641,11 @@ export default function Home() {
                             : "border-white/10 bg-white/5 text-slate-100"
                         }`}
                       >
+                        {message.role === "assistant" && (message.contextualizedQuery || message.task) ? (
+                          <p className="mb-2 text-[11px] uppercase tracking-[0.18em] text-cyan-200/70">
+                            {message.task ? `Task: ${message.task.replace(/_/g, " ")}` : "Retrieved answer"}
+                          </p>
+                        ) : null}
                         <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
                         {message.sources?.length ? (
                           <div className="mt-3 border-t border-white/10 pt-3">
@@ -694,7 +722,7 @@ export default function Home() {
                     }
                   }}
                   rows={3}
-                  placeholder="Ask about the uploaded documents..."
+                  placeholder="Ask about KYC, AML, fraud, refunds, limits, fees, dates, or policy comparisons..."
                   className="w-full resize-none rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/40"
                 />
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
