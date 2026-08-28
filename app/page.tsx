@@ -43,6 +43,7 @@ type Source = {
 type ChatResponse = {
   answer: string;
   sources?: Source[];
+  contextualized_query?: string;
 };
 
 type Message = {
@@ -50,9 +51,17 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   sources?: Source[];
+  contextualizedQuery?: string;
+};
+
+type ChatTurn = {
+  role: "user" | "assistant";
+  content: string;
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const MAX_HISTORY_TURNS = 8;
+const MAX_HISTORY_CHARS = 1600;
 
 function createId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -79,6 +88,27 @@ function statusStyle(status: string) {
     default:
       return "border-white/10 bg-white/5 text-slate-200";
   }
+}
+
+function buildChatHistory(messages: Message[]): ChatTurn[] {
+  const recentMessages = messages.slice(-MAX_HISTORY_TURNS * 2);
+  const turns: ChatTurn[] = [];
+  let totalChars = 0;
+
+  for (const message of recentMessages) {
+    if (message.role === "user" || message.role === "assistant") {
+      const content = message.content.replace(/\s+/g, " ").trim();
+      if (!content) continue;
+      const nextChars = content.length + message.role.length + 2;
+      if (turns.length >= MAX_HISTORY_TURNS || totalChars + nextChars > MAX_HISTORY_CHARS) {
+        break;
+      }
+      turns.push({ role: message.role, content });
+      totalChars += nextChars;
+    }
+  }
+
+  return turns;
 }
 
 export default function Home() {
@@ -254,6 +284,7 @@ export default function Home() {
     setLoading(true);
 
     try {
+      const history = buildChatHistory(messages);
       const response = await fetch(`${API_URL}/api/chat`, {
         method: "POST",
         headers: {
@@ -263,6 +294,7 @@ export default function Home() {
           question: currentQuestion,
           top_k: 5,
           document_id: activeDocumentId || undefined,
+          chat_history: history,
         }),
       });
 
@@ -279,6 +311,7 @@ export default function Home() {
           role: "assistant",
           content: data.answer,
           sources: data.sources,
+          contextualizedQuery: data.contextualized_query,
         },
       ]);
     } catch (error) {
