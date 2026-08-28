@@ -28,10 +28,16 @@ type UploadResponse = {
 };
 
 type Source = {
+  document?: string;
+  page?: number | null;
+  chunk?: {
+    index?: number | null;
+  };
+  excerpt?: string | null;
   document_id?: string;
-  filename?: string;
-  chunk_index?: number;
   stored_as?: string;
+  relevance_score?: number;
+  rank_score?: number;
 };
 
 type ChatResponse = {
@@ -546,7 +552,7 @@ export default function Home() {
                     Search across all uploaded documents
                   </h2>
                   <p className="mt-1 text-sm text-slate-400">
-                    Every answer includes the source document name for each retrieved chunk.
+                    Every answer shows only retrieved document citations, with page and chunk details when available.
                   </p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300">
@@ -584,20 +590,54 @@ export default function Home() {
                           <div className="mt-3 border-t border-white/10 pt-3">
                             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Sources</p>
                             <div className="mt-2 space-y-2">
-                              {message.sources.map((source, index) => (
-                                <div
-                                  key={`${source.document_id ?? "source"}-${index}`}
-                                  className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-300"
-                                >
-                                  <p className="font-medium text-white">
-                                    {source.filename ?? "Unknown document"}
-                                  </p>
-                                  <p className="mt-1">
-                                    Chunk {source.chunk_index ?? index}
-                                    {source.document_id ? ` · ${source.document_id}` : ""}
-                                  </p>
-                                </div>
-                              ))}
+                              {message.sources.map((source, index) => {
+                                const chunkIndex = source.chunk?.index;
+                                const sourceLabel = source.document ?? "Unknown document";
+                                const pageLabel = source.page != null ? `Page ${source.page}` : "Page unavailable";
+                                const chunkLabel = chunkIndex != null ? `Chunk ${chunkIndex}` : "Chunk unavailable";
+
+                                return (
+                                  <details
+                                    key={`${source.document_id ?? "source"}-${index}`}
+                                    className="group rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-xs text-slate-300 transition open:bg-black/30"
+                                  >
+                                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+                                      <div>
+                                        <p className="font-medium text-white">{sourceLabel}</p>
+                                        <p className="mt-1 text-slate-400">
+                                          {pageLabel} · {chunkLabel}
+                                        </p>
+                                      </div>
+                                      <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-slate-400 transition group-open:text-cyan-200">
+                                        Details
+                                      </span>
+                                    </summary>
+                                    <div className="mt-3 space-y-2 border-t border-white/10 pt-3">
+                                      {source.excerpt ? (
+                                        <p className="leading-5 text-slate-300">
+                                          {source.excerpt}
+                                        </p>
+                                      ) : (
+                                        <p className="leading-5 text-slate-500">
+                                          No excerpt available for this source.
+                                        </p>
+                                      )}
+                                      <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
+                                        {source.document_id ? (
+                                          <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
+                                            {source.document_id}
+                                          </span>
+                                        ) : null}
+                                        {source.relevance_score != null ? (
+                                          <span className="rounded-full border border-white/10 bg-white/5 px-2 py-1">
+                                            Relevance {source.relevance_score}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </div>
+                                  </details>
+                                );
+                              })}
                             </div>
                           </div>
                         ) : null}
