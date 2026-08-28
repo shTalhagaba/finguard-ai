@@ -63,6 +63,33 @@ def _format_context_entry(document: Document) -> str:
     return f"{header}\nContent: {document.page_content}"
 
 
+def _build_excerpt(content: str, limit: int = 240) -> str:
+    normalized = " ".join(content.split()).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: limit - 1].rstrip()}…"
+
+
+def _build_source_payload(document: Document, result: dict[str, object]) -> dict[str, object]:
+    metadata = document.metadata or {}
+    page_number = metadata.get("page_number")
+    chunk_index = metadata.get("chunk_index")
+    excerpt = _build_excerpt(document.page_content)
+
+    return {
+        "document": metadata.get("filename") or "Unknown document",
+        "page": page_number,
+        "chunk": {
+            "index": chunk_index,
+        },
+        "excerpt": excerpt or None,
+        "document_id": metadata.get("document_id"),
+        "stored_as": metadata.get("stored_as"),
+        "relevance_score": result["relevance_score"],
+        "rank_score": result["rank_score"],
+    }
+
+
 def _clip_context(context_parts: list[str], max_chars: int) -> str:
     context = []
     total = 0
@@ -142,17 +169,7 @@ def generate_answer(query: str, k: int = 4, document_id: str | None = None):
         metadata = document.metadata or {}
         entry = _format_context_entry(document)
         context_parts.append(entry)
-        sources.append(
-            {
-                "document_id": metadata.get("document_id"),
-                "filename": metadata.get("filename"),
-                "stored_as": metadata.get("stored_as"),
-                "chunk_index": metadata.get("chunk_index"),
-                "page_number": metadata.get("page_number"),
-                "relevance_score": result["relevance_score"],
-                "rank_score": result["rank_score"],
-            }
-        )
+        sources.append(_build_source_payload(document, result))
 
     context = _clip_context(context_parts, settings.retrieval_max_context_chars)
 
