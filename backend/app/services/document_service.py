@@ -1,33 +1,32 @@
 from pathlib import Path
+
+from fastapi import HTTPException
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from app.config import get_settings
+
 
 def extract_text_from_pdf(file_path: str) -> str:
-    """
-    Extract text from a PDF file.
-    """
-    reader = PdfReader(file_path)
-    text = ""
+    try:
+        reader = PdfReader(file_path)
+        text = []
 
-    for page in reader.pages:
-        page_text = page.extract_text()
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text.append(page_text)
 
-        if page_text:
-            text += page_text + "\n"
+        return "\n".join(text).strip()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to read PDF: {exc}") from exc
 
-    return text
 
-
-def split_text_into_chunks(text: str):
-    """
-    Split document text into smaller chunks for RAG.
-    """
+def split_text_into_chunks(text: str) -> list[str]:
+    settings = get_settings()
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
     )
 
-    chunks = text_splitter.split_text(text)
-
-    return chunks
+    return text_splitter.split_text(text)

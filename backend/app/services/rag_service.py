@@ -1,70 +1,15 @@
-import os
+from fastapi import HTTPException
 
-from dotenv import load_dotenv
-from langchain_chroma import Chroma
-from langchain_core.documents import Document
-from langchain_google_genai import (
-    GoogleGenerativeAIEmbeddings,
-    ChatGoogleGenerativeAI,
-)
-
-load_dotenv()
-
-CHROMA_DB_PATH = "chroma_db"
-
-
-def get_embeddings():
-    api_key = os.getenv("GOOGLE_API_KEY")
-
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY is missing. Check your .env file.")
-
-    return GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
-        google_api_key=api_key,
-    )
-
-
-def get_vector_store():
-    embeddings = get_embeddings()
-
-    return Chroma(
-        collection_name="finguard_documents",
-        embedding_function=embeddings,
-        persist_directory=CHROMA_DB_PATH,
-    )
-
-
-def add_document_chunks(chunks, filename: str):
-    vector_store = get_vector_store()
-
-    documents = [
-        Document(
-            page_content=chunk,
-            metadata={
-                "filename": filename,
-                "chunk_index": index,
-            },
-        )
-        for index, chunk in enumerate(chunks)
-    ]
-
-    vector_store.add_documents(documents)
-
-    return len(documents)
+from app.services.llm_service import generate_answer as generate_llm_answer
+from app.services.vector_service import similarity_search
 
 
 def search_documents(query: str, k: int = 4):
-    vector_store = get_vector_store()
-
-    return vector_store.similarity_search(
-        query=query,
-        k=k,
-    )
+    return similarity_search(query=query, k=k)
 
 
-def generate_answer(query: str):
-    results = search_documents(query)
+def generate_answer(query: str, k: int = 4):
+    results = search_documents(query, k=k)
 
     if not results:
         return {
@@ -73,42 +18,16 @@ def generate_answer(query: str):
         }
 
     context = "\n\n---\n\n".join(
-        [
-            f"Source: {doc.metadata.get('filename', 'Unknown')}\n"
-            f"Content: {doc.page_content}"
-            for doc in results
-        ]
+        f"Source: {doc.metadata.get('filename', 'Unknown')}\nContent: {doc.page_content}"
+        for doc in results
     )
 
-    api_key = os.getenv("GOOGLE_API_KEY")
-
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY is missing. Check your .env file.")
-
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-3.6-flash",
-        google_api_key=api_key,
-        temperature=0.2,
-    )
-
-    prompt = f"""You are FinGuard AI, an intelligent document assistant.
-
-Answer the user's question using ONLY the provided document context.
-
-Rules:
-- Do not invent information.
-- Do not use outside knowledge.
-- If the answer is not available in the context, clearly say so.
-- Keep the answer clear and professional.
-
-DOCUMENT CONTEXT:
-{context}
-
-USER QUESTION:
-{query}
-"""
-
-    response = llm.invoke(prompt)
+    try:
+        answer = generate_llm_answer(context=context, question=query)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate answer: {exc}") from exc
 
     sources = [
         {
@@ -119,6 +38,6 @@ USER QUESTION:
     ]
 
     return {
-        "answer": response.content,
+        "answer": answer,
         "sources": sources,
     }

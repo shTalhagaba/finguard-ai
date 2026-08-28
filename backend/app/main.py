@@ -1,22 +1,33 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import get_settings
 from app.routes import upload, chat
 
 
+settings = get_settings()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    settings.chroma_persist_directory.mkdir(parents=True, exist_ok=True)
+    settings.uploads_directory.mkdir(parents=True, exist_ok=True)
+    yield
+
+
 app = FastAPI(
-    title="FinGuard AI",
+    title=settings.app_name,
     description="AI-powered Fintech RAG Assistant",
-    version="1.0.0"
+    version=settings.app_version,
+    lifespan=lifespan,
 )
 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -30,12 +41,14 @@ app.include_router(chat.router)
 @app.get("/")
 async def root():
     return {
-        "message": "FinGuard AI API is running"
+        "message": "FinGuard AI API is running",
+        "version": settings.app_version,
     }
 
 
 @app.get("/health")
 async def health_check():
     return {
-        "status": "healthy"
+        "status": "healthy",
+        "service": settings.app_name,
     }
