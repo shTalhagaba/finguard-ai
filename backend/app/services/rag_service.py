@@ -186,12 +186,22 @@ def _format_chat_history(chat_history: list[dict[str, str]], max_turns: int = 6)
     return "\n".join(lines)
 
 
-def search_documents(query: str, k: int = 4, document_id: str | None = None) -> list[dict[str, object]]:
+def search_documents(
+    query: str,
+    k: int = 4,
+    document_id: str | None = None,
+    user_id: str | None = None,
+) -> list[dict[str, object]]:
     settings = get_settings()
     processed_query = preprocess_query(query)
     initial_k = max(k, settings.retrieval_initial_k)
     try:
-        raw_results = similarity_search_with_scores(query=processed_query, k=initial_k, document_id=document_id)
+        raw_results = similarity_search_with_scores(
+            query=processed_query,
+            k=initial_k,
+            document_id=document_id,
+            user_id=user_id,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -236,6 +246,7 @@ def generate_answer(
     k: int = 4,
     document_id: str | None = None,
     chat_history: list[dict[str, str]] | None = None,
+    user_id: str | None = None,
 ):
     settings = get_settings()
     task_profile = build_task_profile(query)
@@ -253,7 +264,7 @@ def generate_answer(
     if task_profile["task"] in {"policy_comparison", "extract_financial_limits", "extract_fees", "extract_important_dates"}:
         retrieval_query = f"{contextualized_query} {task_profile['instructions']}"
 
-    results = search_documents(retrieval_query, k=k, document_id=document_id)
+    results = search_documents(retrieval_query, k=k, document_id=document_id, user_id=user_id)
 
     if not results:
         return {

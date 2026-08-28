@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from app.auth import get_current_user
 from app.config import get_settings
 from app.services.document_registry import (
     cleanup_document_artifacts,
@@ -32,6 +33,7 @@ router = APIRouter(prefix="/api", tags=["Documents"])
 def _document_to_payload(document):
     return {
         "document_id": document.document_id,
+        "user_id": document.user_id,
         "filename": document.filename,
         "stored_as": document.stored_as,
         "status": document.status,
@@ -46,12 +48,12 @@ def _document_to_payload(document):
 
 
 @router.get("/documents")
-async def get_documents():
-    return {"documents": [_document_to_payload(document) for document in list_documents()]}
+async def get_documents(current_user: dict = Depends(get_current_user)):
+    return {"documents": [_document_to_payload(document) for document in list_documents(user_id=current_user["id"])]}
 
 
 @router.post("/upload")
-async def upload_documents(files: list[UploadFile] = File(...)):
+async def upload_documents(files: list[UploadFile] = File(...), current_user: dict = Depends(get_current_user)):
     settings = get_settings()
     if not files:
         raise HTTPException(status_code=400, detail="At least one PDF file is required.")
@@ -79,7 +81,7 @@ async def upload_documents(files: list[UploadFile] = File(...)):
             continue
 
         file_hash = compute_file_hash(content)
-        existing = find_document_by_hash(file_hash)
+        existing = find_document_by_hash(file_hash, user_id=current_user["id"])
         if existing:
             responses.append(
                 {
@@ -96,6 +98,7 @@ async def upload_documents(files: list[UploadFile] = File(...)):
         file_path = settings.uploads_directory / stored_as
         record = create_document_record(
             document_id=document_id,
+            user_id=current_user["id"],
             filename=file.filename,
             stored_as=stored_as,
             file_hash=file_hash,
@@ -124,12 +127,14 @@ async def upload_documents(files: list[UploadFile] = File(...)):
             chunks_stored = add_document_chunks(
                 chunks=chunks,
                 document_id=document_id,
+                user_id=current_user["id"],
                 filename=file.filename,
                 stored_as=stored_as,
             )
             preview = build_preview(extracted_text)
             updated = update_document(
                 document_id,
+                user_id=current_user["id"],
                 status="completed",
                 characters_extracted=len(extracted_text),
                 chunks_created=len(chunks),
@@ -144,11 +149,11 @@ async def upload_documents(files: list[UploadFile] = File(...)):
                 }
             )
         except HTTPException as exc:
-            update_document(document_id, status="failed", error=exc.detail)
+            update_document(document_id, user_id=current_user["id"], status="failed", error=exc.detail)
             delete_file_safely(file_path)
             failures.append({"filename": file.filename, "detail": exc.detail, "document_id": document_id})
         except Exception as exc:
-            update_document(document_id, status="failed", error=str(exc))
+            update_document(document_id, user_id=current_user["id"], status="failed", error=str(exc))
             delete_file_safely(file_path)
             failures.append(
                 {
@@ -168,8 +173,8 @@ async def upload_documents(files: list[UploadFile] = File(...)):
 
 
 @router.delete("/documents/{document_id}")
-async def delete_document(document_id: str):
-    document = get_document(document_id)
+async def delete_document(document_id: str, current_user: dict = Depends(get_current_user)):
+    document = get_document(document_id, user_id=current_user["id"])
     if document is None:
         raise HTTPException(status_code=404, detail="Document not found.")
 
@@ -179,5 +184,5 @@ async def delete_document(document_id: str):
         pass
 
     cleanup_document_artifacts(document)
-    remove_document(document_id)
+    remove_document(document_id, user_id=current_user["id"])
     return {"message": "Document deleted successfully", "document_id": document_id}

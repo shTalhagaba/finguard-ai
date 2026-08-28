@@ -4,7 +4,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routes import chat, upload
+from app.routes import auth, chat, upload
+from app.services.store import init_schema
 
 
 settings = get_settings()
@@ -14,6 +15,8 @@ settings = get_settings()
 async def lifespan(_: FastAPI):
     settings.chroma_persist_directory.mkdir(parents=True, exist_ok=True)
     settings.uploads_directory.mkdir(parents=True, exist_ok=True)
+    settings.data_directory.mkdir(parents=True, exist_ok=True)
+    init_schema()
     yield
 
 
@@ -36,6 +39,7 @@ app.add_middleware(
 
 app.include_router(upload.router)
 app.include_router(chat.router)
+app.include_router(auth.router)
 
 
 @app.get("/")

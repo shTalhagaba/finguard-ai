@@ -1,33 +1,18 @@
 from __future__ import annotations
 
-import json
-import shutil
-import threading
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
-from hashlib import sha256
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
-
-REGISTRY_FILENAME = "documents.json"
-_LOCK = threading.Lock()
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _registry_path() -> Path:
-    settings = get_settings()
-    settings.uploads_directory.mkdir(parents=True, exist_ok=True)
-    return settings.uploads_directory / REGISTRY_FILENAME
+from app.db import db_transaction
+from app.services.store import utcnow
 
 
 @dataclass
 class DocumentRecord:
     document_id: str
+    user_id: str
     filename: str
     stored_as: str
     file_hash: str
@@ -42,106 +27,134 @@ class DocumentRecord:
 
 
 def compute_file_hash(content: bytes) -> str:
+    from hashlib import sha256
+
     return sha256(content).hexdigest()
 
 
-def _default_registry() -> dict[str, Any]:
-    return {"documents": []}
+def _row_to_record(row: Any) -> DocumentRecord:
+    return DocumentRecord(**dict(row))
 
 
-def load_registry() -> dict[str, Any]:
-    path = _registry_path()
-    if not path.exists():
-        return _default_registry()
-
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return _default_registry()
+def list_documents(*, user_id: str) -> list[DocumentRecord]:
+    with db_transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM documents WHERE user_id = ? ORDER BY updated_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [_row_to_record(row) for row in rows]
 
 
-def _save_registry(registry: dict[str, Any]) -> None:
-    path = _registry_path()
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(registry, indent=2, sort_keys=True))
-    tmp_path.replace(path)
+def get_document(document_id: str, *, user_id: str) -> DocumentRecord | None:
+    with db_transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM documents WHERE document_id = ? AND user_id = ?",
+            (document_id, user_id),
+        ).fetchone()
+    return _row_to_record(row) if row else None
 
 
-def list_documents() -> list[DocumentRecord]:
-    registry = load_registry()
-    return [DocumentRecord(**item) for item in registry.get("documents", [])]
-
-
-def get_document(document_id: str) -> DocumentRecord | None:
-    for document in list_documents():
-        if document.document_id == document_id:
-            return document
-    return None
-
-
-def find_document_by_hash(file_hash: str) -> DocumentRecord | None:
-    for document in list_documents():
-        if document.file_hash == file_hash:
-            return document
-    return None
+def find_document_by_hash(file_hash: str, *, user_id: str) -> DocumentRecord | None:
+    with db_transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM documents WHERE file_hash = ? AND user_id = ?",
+            (file_hash, user_id),
+        ).fetchone()
+    return _row_to_record(row) if row else None
 
 
 def upsert_document(document: DocumentRecord) -> DocumentRecord:
-    with _LOCK:
-        registry = load_registry()
-        documents = registry.get("documents", [])
-        filtered = [item for item in documents if item.get("document_id") != document.document_id]
-        filtered.append(asdict(document))
-        registry["documents"] = filtered
-        _save_registry(registry)
+    with db_transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO documents (
+              document_id, user_id, filename, stored_as, file_hash, status,
+              created_at, updated_at, error, characters_extracted,
+              chunks_created, chunks_stored, preview
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(document_id) DO UPDATE SET
+              filename=excluded.filename,
+              stored_as=excluded.stored_as,
+              file_hash=excluded.file_hash,
+              status=excluded.status,
+              updated_at=excluded.updated_at,
+              error=excluded.error,
+              characters_extracted=excluded.characters_extracted,
+              chunks_created=excluded.chunks_created,
+              chunks_stored=excluded.chunks_stored,
+              preview=excluded.preview
+            """,
+            (
+                document.document_id,
+                document.user_id,
+                document.filename,
+                document.stored_as,
+                document.file_hash,
+                document.status,
+                document.created_at,
+                document.updated_at,
+                document.error,
+                document.characters_extracted,
+                document.chunks_created,
+                document.chunks_stored,
+                document.preview,
+            ),
+        )
     return document
 
 
-def update_document(document_id: str, **changes: Any) -> DocumentRecord:
-    with _LOCK:
-        registry = load_registry()
-        documents = registry.get("documents", [])
-        updated: list[dict[str, Any]] = []
-        result: dict[str, Any] | None = None
+def update_document(document_id: str, *, user_id: str, **changes: Any) -> DocumentRecord:
+    allowed_fields = {
+        "filename",
+        "stored_as",
+        "file_hash",
+        "status",
+        "error",
+        "characters_extracted",
+        "chunks_created",
+        "chunks_stored",
+        "preview",
+    }
+    update_fields = {key: value for key, value in changes.items() if key in allowed_fields}
+    if not update_fields:
+        existing = get_document(document_id, user_id=user_id)
+        if existing is None:
+            raise KeyError(document_id)
+        return existing
 
-        for item in documents:
-            if item.get("document_id") == document_id:
-                item = {**item, **changes, "updated_at": _utcnow()}
-                result = item
-            updated.append(item)
-
-        if result is None:
+    update_fields["updated_at"] = utcnow()
+    assignments = ", ".join(f"{key} = ?" for key in update_fields)
+    params = list(update_fields.values()) + [document_id, user_id]
+    with db_transaction() as conn:
+        result = conn.execute(
+            f"UPDATE documents SET {assignments} WHERE document_id = ? AND user_id = ?",
+            tuple(params),
+        )
+        if result.rowcount == 0:
             raise KeyError(document_id)
 
-        registry["documents"] = updated
-        _save_registry(registry)
-        return DocumentRecord(**result)
+    existing = get_document(document_id, user_id=user_id)
+    if existing is None:
+        raise KeyError(document_id)
+    return existing
 
 
-def remove_document(document_id: str) -> DocumentRecord | None:
-    with _LOCK:
-        registry = load_registry()
-        documents = registry.get("documents", [])
-        remaining = []
-        removed: dict[str, Any] | None = None
-
-        for item in documents:
-            if item.get("document_id") == document_id:
-                removed = item
-                continue
-            remaining.append(item)
-
-        registry["documents"] = remaining
-        _save_registry(registry)
-
-    if removed is None:
+def remove_document(document_id: str, *, user_id: str) -> DocumentRecord | None:
+    existing = get_document(document_id, user_id=user_id)
+    if existing is None:
         return None
-    return DocumentRecord(**removed)
+    with db_transaction() as conn:
+        conn.execute(
+            "DELETE FROM documents WHERE document_id = ? AND user_id = ?",
+            (document_id, user_id),
+        )
+    return existing
 
 
 def create_document_record(
     *,
     document_id: str,
+    user_id: str,
     filename: str,
     stored_as: str,
     file_hash: str,
@@ -152,9 +165,10 @@ def create_document_record(
     preview: str = "",
     error: str | None = None,
 ) -> DocumentRecord:
-    timestamp = _utcnow()
+    timestamp = utcnow()
     return DocumentRecord(
         document_id=document_id,
+        user_id=user_id,
         filename=filename,
         stored_as=stored_as,
         file_hash=file_hash,

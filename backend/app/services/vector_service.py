@@ -33,6 +33,7 @@ def add_document_chunks(
     *,
     chunks: list[dict[str, object]],
     document_id: str,
+    user_id: str,
     filename: str,
     stored_as: str,
 ) -> int:
@@ -46,6 +47,7 @@ def add_document_chunks(
             page_content=str(chunk["text"]),
             metadata={
                 "document_id": document_id,
+                "user_id": user_id,
                 "filename": filename,
                 "stored_as": stored_as,
                 "chunk_index": index,
@@ -58,27 +60,36 @@ def add_document_chunks(
     return len(documents)
 
 
-def similarity_search(query: str, k: int = 4, document_id: str | None = None) -> list[Document]:
-    filter_kwargs = {"document_id": document_id} if document_id else None
-    return get_vector_store().similarity_search(query=query, k=k, filter=filter_kwargs)
+def similarity_search(query: str, k: int = 4, document_id: str | None = None, user_id: str | None = None) -> list[Document]:
+    filter_kwargs: dict[str, str] = {}
+    if document_id:
+        filter_kwargs["document_id"] = document_id
+    if user_id:
+        filter_kwargs["user_id"] = user_id
+    return get_vector_store().similarity_search(query=query, k=k, filter=filter_kwargs or None)
 
 
 def similarity_search_with_scores(
     query: str,
     k: int = 4,
     document_id: str | None = None,
+    user_id: str | None = None,
 ) -> list[tuple[Document, float]]:
     vector_store = get_vector_store()
-    filter_kwargs = {"document_id": document_id} if document_id else None
+    filter_kwargs: dict[str, str] = {}
+    if document_id:
+        filter_kwargs["document_id"] = document_id
+    if user_id:
+        filter_kwargs["user_id"] = user_id
 
     if hasattr(vector_store, "similarity_search_with_relevance_scores"):
         return vector_store.similarity_search_with_relevance_scores(
             query=query,
             k=k,
-            filter=filter_kwargs,
+            filter=filter_kwargs or None,
         )
 
-    documents = vector_store.similarity_search(query=query, k=k, filter=filter_kwargs)
+    documents = vector_store.similarity_search(query=query, k=k, filter=filter_kwargs or None)
     return [(document, 0.0) for document in documents]
 
 

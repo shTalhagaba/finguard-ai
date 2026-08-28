@@ -24,6 +24,11 @@ class Settings(BaseModel):
     google_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
     chroma_persist_directory: Path = BASE_DIR / "chroma_db"
     uploads_directory: Path = BASE_DIR / "uploads"
+    data_directory: Path = BASE_DIR / "data"
+    database_filename: str = "finguard.sqlite3"
+    auth_signing_key: str = Field(default_factory=lambda: os.getenv("AUTH_SIGNING_KEY", "dev-only-change-me"))
+    password_hash_iterations: int = 390000
+    access_token_ttl_minutes: int = 60 * 24
     gemini_embedding_model: str = "models/gemini-embedding-001"
     gemini_chat_model: str = "gemini-2.5-flash"
     chunk_size: int = 1000
@@ -42,4 +47,5 @@ def get_settings() -> Settings:
     settings = Settings()
     settings.chroma_persist_directory.mkdir(parents=True, exist_ok=True)
     settings.uploads_directory.mkdir(parents=True, exist_ok=True)
+    settings.data_directory.mkdir(parents=True, exist_ok=True)
     return settings
