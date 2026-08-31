@@ -36,6 +36,11 @@ yarn-error.log*
 # Production
 /out/
 
+# Backend runtime data (uploaded files, vector DB persistence)
+backend/chroma_db/
+backend/uploads/
+backend/data/
+
 # Misc
 *.pem
 .vercel

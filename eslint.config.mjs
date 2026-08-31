@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Stale nested checkout of this repo, not part of the build.
+    "frontend/**",
   ]),
 ]);
 

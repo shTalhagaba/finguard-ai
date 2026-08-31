@@ -5,4 +5,9 @@ pydantic==2.11.7
 python-multipart==0.0.20
 langchain-core==0.3.75
 langchain-google-genai==2.1.8
+langchain-chroma==0.2.5
 chromadb==1.0.20
+pytest==8.4.1
+httpx==0.28.1
+pypdf==6.0.0
+langchain-text-splitters==0.3.11

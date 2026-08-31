@@ -1,0 +1,25 @@
+.git
+.github
+node_modules
+.next
+out
+coverage
+*.tsbuildinfo
+
+# Embedded frontend checkout is not used for the Docker build context
+frontend
+
+# Backend runtime/data dirs and local virtualenv (keep app/, requirements.txt, Dockerfile)
+backend/venv
+backend/chroma_db
+backend/uploads
+backend/data
+
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+.vscode
+.idea

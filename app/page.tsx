@@ -173,15 +173,13 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const filePickerId = useMemo(() => `pdf-${createId("picker")}`, []);
-  const authHeaders = useMemo(
-    () =>
-      auth
-        ? {
-            Authorization: `Bearer ${auth.accessToken}`,
-          }
-        : {},
-    [auth]
-  );
+  const authHeaders = useMemo<Record<string, string>>(() => {
+    const headers: Record<string, string> = {};
+    if (auth) {
+      headers.Authorization = `Bearer ${auth.accessToken}`;
+    }
+    return headers;
+  }, [auth]);
 
   useEffect(() => {
     if (!auth) return;
