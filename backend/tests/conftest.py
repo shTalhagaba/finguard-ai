@@ -19,6 +19,7 @@ def backend_env(monkeypatch, tmp_path_factory):
     """
     monkeypatch.setenv("GOOGLE_API_KEY", "test-google-key")
     monkeypatch.setenv("AUTH_SIGNING_KEY", "test-signing-key-test-signing-key")
+    monkeypatch.setenv("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver")
 
     import app.config
 
