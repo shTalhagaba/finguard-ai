@@ -1,36 +1,91 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FinGuard AI
 
-## Getting Started
+An AI-powered fintech policy assistant. Users upload policy documents (PDFs), and a
+retrieval-augmented generation (RAG) pipeline answers questions grounded in that
+content, scoped per-user with authentication.
 
-First, run the development server:
+- **Frontend**: [Next.js 16](https://nextjs.org) (App Router), React 19, Tailwind CSS 4
+- **Backend**: FastAPI, ChromaDB (vector store), Google Gemini (chat + embeddings)
+- **Auth**: Token-based, multi-user with per-user document ownership scoping
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## Project layout
+
+```
+.
+├── app/            # Next.js App Router pages
+├── backend/
+│   ├── app/
+│   │   ├── main.py       # FastAPI app entrypoint
+│   │   ├── auth.py       # Password hashing / token issuance
+│   │   ├── config.py     # Settings (env-driven)
+│   │   ├── routes/       # /api/auth, /api/upload, /api/chat
+│   │   └── services/     # Document processing, vector store, RAG, LLM calls
+│   └── tests/
+├── tests/          # Frontend tests (Vitest + Testing Library)
+└── Dockerfile      # Production frontend build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Getting started
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Backend
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # then fill in GOOGLE_API_KEY and AUTH_SIGNING_KEY
+uvicorn app.main:app --reload
+```
 
-## Learn More
+The API runs at `http://localhost:8000`.
 
-To learn more about Next.js, take a look at the following resources:
+Required environment variables (see `backend/.env.example`):
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+| Variable | Description |
+| --- | --- |
+| `GOOGLE_API_KEY` | Google Gemini API key, used for embeddings and chat completion |
+| `AUTH_SIGNING_KEY` | Secret used to sign access tokens — set a real value outside local dev |
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### Frontend
 
-## Deploy on Vercel
+```bash
+npm install
+cp .env.example .env.local   # set NEXT_PUBLIC_API_URL if the backend isn't on :8000
+npm run dev
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Open [http://localhost:3000](http://localhost:3000).
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Tests
+
+```bash
+# Frontend
+npm run test
+
+# Backend
+cd backend && venv/bin/pytest
+```
+
+## Docker
+
+The `Dockerfile` builds a production frontend image:
+
+```bash
+docker build --build-arg NEXT_PUBLIC_API_URL=https://your-api-host -t finguard-frontend .
+docker run -p 3000:3000 finguard-frontend
+```
+
+The backend is not containerized yet; run it directly with `uvicorn` as above.
+
+## API overview
+
+| Route | Description |
+| --- | --- |
+| `POST /api/auth/register` | Create an account |
+| `POST /api/auth/login` | Exchange credentials for an access token |
+| `POST /api/upload` | Upload a PDF, chunk it, and index it in the vector store |
+| `POST /api/chat` | Ask a question; retrieves relevant chunks and generates a grounded answer |
+
+Chat and upload routes require a bearer token from `/api/auth/login`; documents and
+chat sessions are scoped to the authenticated user.
