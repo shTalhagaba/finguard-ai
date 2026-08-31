@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -21,7 +24,7 @@ class Settings(BaseModel):
             "http://127.0.0.1:3000",
         ]
     )
-    google_api_key: str | None = Field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
+    google_api_key: Optional[str] = Field(default_factory=lambda: os.getenv("GOOGLE_API_KEY"))
     chroma_persist_directory: Path = BASE_DIR / "chroma_db"
     uploads_directory: Path = BASE_DIR / "uploads"
     data_directory: Path = BASE_DIR / "data"

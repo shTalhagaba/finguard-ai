@@ -6,7 +6,7 @@ import hmac
 import json
 import secrets
 import time
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -84,7 +84,7 @@ def decode_access_token(token: str) -> dict[str, Any]:
 
 
 def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> dict[str, Any]:
     if credentials is None or not credentials.credentials:
         raise HTTPException(status_code=401, detail="Authentication required.")
