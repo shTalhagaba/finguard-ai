@@ -13,7 +13,6 @@ FinGuard AI is a full-stack document intelligence app built with:
 - `backend/` — the FastAPI backend (`backend/app`), its `requirements.txt`, and its own `Dockerfile`.
 - `Dockerfile.frontend` (repo root) — production image for the frontend.
 - `docker-compose.yml` — local orchestration of both services.
-- `frontend/` is a stale nested checkout of this same repository and is **not** used by the Docker build, CI, or deployment — it's excluded via `.dockerignore` and ignored by tooling. It's left alone here since it may hold local work-in-progress; consider removing it separately.
 
 ## Production Readiness
 
@@ -155,4 +154,4 @@ Start with:
 ## Notes
 
 - Do not hardcode secrets into Dockerfiles, compose files, or source code — see the Security Notice above.
-- `.dockerignore` excludes `backend/venv`, `backend/chroma_db`, `backend/uploads`, `backend/data`, the stale nested `frontend/` checkout, and all `.env*` files (except `.env.example`) from the Docker build context.
+- `.dockerignore` excludes `backend/venv`, `backend/chroma_db`, `backend/uploads`, `backend/data`, and all `.env*` files (except `.env.example`) from the Docker build context.
